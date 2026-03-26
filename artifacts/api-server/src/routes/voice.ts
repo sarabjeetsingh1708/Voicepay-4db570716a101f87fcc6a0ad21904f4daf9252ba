@@ -1,59 +1,48 @@
 import { Router, type IRouter } from "express";
-import FormData from "form-data";
 import fetch from "node-fetch";
 
 const router: IRouter = Router();
 
-const SARVAM_API_KEY = process.env.SARVAM_API_KEY || "";
-const SARVAM_BASE = "https://api.sarvam.ai";
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
+const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID || "";
 
-// POST /api/voice/stt
-router.post("/stt", async (req, res) => {
+// GET /api/voice/token
+// Returns a signed short-lived WebRTC session token so the API key is never exposed client-side
+router.get("/token", async (req, res) => {
   try {
-    const { audio, languageCode } = req.body;
-    if (!audio || !languageCode) {
-      res.status(400).json({ error: "Missing audio or languageCode" });
+    if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
+      res.status(500).json({ error: "ElevenLabs credentials not configured" });
       return;
     }
 
-    const audioBuffer = Buffer.from(audio, "base64");
-    const rawMime = (req.body.mimeType as string) || "audio/wav";
-    // Strip codec qualifier — Sarvam rejects "audio/webm;codecs=opus" but accepts "audio/webm"
-    const mimeType = rawMime.split(";")[0].trim();
-    const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp3") ? "mp3" : "wav";
-    const form = new FormData();
-    form.append("file", audioBuffer, {
-      filename: `audio.${ext}`,
-      contentType: mimeType,
-    });
-    form.append("language_code", languageCode);
-    form.append("model", "saarika:v2.5");
-
-    const response = await fetch(`${SARVAM_BASE}/speech-to-text`, {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_API_KEY,
-        ...form.getHeaders(),
-      },
-      body: form,
-    });
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${ELEVENLABS_AGENT_ID}`,
+      {
+        method: "GET",
+        headers: {
+          "xi-api-key": ELEVENLABS_API_KEY,
+        },
+      }
+    );
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Sarvam STT error:", errText);
-      res.status(500).json({ error: "STT service failed" });
+      console.error("ElevenLabs token error:", errText);
+      res.status(500).json({ error: "Failed to get session token" });
       return;
     }
 
-    const data = (await response.json()) as { transcript: string };
-    res.json({ transcript: data.transcript || "" });
+    const data = (await response.json()) as { token: string };
+    res.json({ token: data.token });
   } catch (err) {
-    console.error("STT error:", err);
+    console.error("Token endpoint error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // POST /api/voice/parse
+// Parses a transcript into structured payment intent (action, amount, recipient, date)
+// Called by the ElevenLabs agent via a client tool after transcription
 router.post("/parse", async (req, res) => {
   const { transcript, contacts = [], languageCode = "en-IN" } = req.body;
   if (!transcript) {
@@ -61,36 +50,10 @@ router.post("/parse", async (req, res) => {
     return;
   }
 
-  // If not English, translate to English first so name/amount matching works
-  let englishTranscript = transcript;
-  if (languageCode !== "en-IN") {
-    try {
-      const tResp = await fetch(`${SARVAM_BASE}/translate`, {
-        method: "POST",
-        headers: {
-          "api-subscription-key": SARVAM_API_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          input: transcript,
-          source_language_code: languageCode,
-          target_language_code: "en-IN",
-          model: "mayura:v1",
-          enable_preprocessing: true,
-        }),
-      });
-      if (tResp.ok) {
-        const tData = await tResp.json() as { translated_text: string };
-        englishTranscript = tData.translated_text || transcript;
-      }
-    } catch {
-      // fallback to original transcript if translation fails
-    }
-  }
+  // Normalise to lowercase English for matching
+  const text = transcript.toLowerCase().trim();
 
-  const text = englishTranscript.toLowerCase().trim();
-
-  // Hindi number words mapping (still useful for Hinglish transcripts)
+  // Hindi/Hinglish number words — useful even when ElevenLabs transcribes in Hinglish
   const hindiNumbers: Record<string, number> = {
     ek: 1, do: 2, teen: 3, char: 4, paanch: 5, chhe: 6, saat: 7,
     aath: 8, nau: 9, das: 10, gyarah: 11, barah: 12, terah: 13,
@@ -125,11 +88,8 @@ router.post("/parse", async (req, res) => {
     amount = parseInt(digitMatch[1].replace(/,/g, ""), 10);
     confidence += 0.2;
   } else {
-    // Try Hindi number words (for Hinglish fallback)
     let extractedAmount = 0;
-    let multiplier = 1;
     let found = false;
-
     const words = text.split(/\s+/);
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
@@ -142,7 +102,6 @@ router.post("/parse", async (req, res) => {
         } else if (val === 1000) {
           if (extractedAmount === 0) extractedAmount = 1000;
           else extractedAmount *= 1000;
-          multiplier = 1000;
           found = true;
         } else if (val === 100000) {
           if (extractedAmount === 0) extractedAmount = 100000;
@@ -160,7 +119,7 @@ router.post("/parse", async (req, res) => {
     }
   }
 
-  // Match recipient — now always runs against English text so contact names match
+  // Match recipient from contacts list
   let recipient: string | null = null;
   let recipientUpiId: string | null = null;
 
@@ -216,7 +175,6 @@ router.post("/parse", async (req, res) => {
         break;
       }
     }
-    // Match "15th", "20th" style dates
     const dateNumMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)\b/);
     if (dateNumMatch) {
       const day = parseInt(dateNumMatch[1]);
@@ -237,86 +195,8 @@ router.post("/parse", async (req, res) => {
     recipientUpiId,
     scheduledDate,
     confidence: Math.min(confidence, 1.0),
-    rawTranscript: transcript, // always return original transcript for the HEARD card
+    rawTranscript: transcript,
   });
-});
-
-// POST /api/voice/tts
-router.post("/tts", async (req, res) => {
-  try {
-    const { text, languageCode } = req.body;
-    if (!text || !languageCode) {
-      res.status(400).json({ error: "Missing text or languageCode" });
-      return;
-    }
-
-    const response = await fetch(`${SARVAM_BASE}/text-to-speech`, {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: [text],
-        target_language_code: languageCode,
-        model: "bulbul:v2",
-        speaker: "anushka",
-        enable_preprocessing: true,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Sarvam TTS error:", errText);
-      res.status(500).json({ error: "TTS service failed" });
-      return;
-    }
-
-    const data = (await response.json()) as { audios: string[] };
-    res.json({ audio: data.audios?.[0] || "" });
-  } catch (err) {
-    console.error("TTS error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /api/voice/translate
-router.post("/translate", async (req, res) => {
-  try {
-    const { text, sourceLanguage, targetLanguage } = req.body;
-    if (!text || !sourceLanguage || !targetLanguage) {
-      res.status(400).json({ error: "Missing required fields" });
-      return;
-    }
-
-    const response = await fetch(`${SARVAM_BASE}/translate`, {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        input: text,
-        source_language_code: sourceLanguage,
-        target_language_code: targetLanguage,
-        model: "mayura:v1",
-        enable_preprocessing: true,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Sarvam translate error:", errText);
-      res.status(500).json({ error: "Translation service failed" });
-      return;
-    }
-
-    const data = (await response.json()) as { translated_text: string };
-    res.json({ translatedText: data.translated_text || "" });
-  } catch (err) {
-    console.error("Translate error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
 });
 
 export default router;

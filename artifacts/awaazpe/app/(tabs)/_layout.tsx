@@ -1,121 +1,87 @@
-import { BlurView } from "expo-blur";
-import { isLiquidGlassAvailable } from "expo-glass-effect";
-import { Tabs } from "expo-router";
-import { Icon, Label, NativeTabs } from "expo-router/unstable-native-tabs";
-import { SymbolView } from "expo-symbols";
-import { Feather, Ionicons } from "@expo/vector-icons";
-import React from "react";
-import { Platform, StyleSheet, View } from "react-native";
-import { COLORS } from "@/constants/colors";
-import { useTheme } from "@/context/ThemeContext";
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  useFonts,
+} from "@expo-google-fonts/inter";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import React, { useEffect } from "react";
+import { Platform } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
-function NativeTabLayout() {
-  return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: "house", selected: "house.fill" }} />
-        <Label>Home</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="pay">
-        <Icon sf={{ default: "mic.circle", selected: "mic.circle.fill" }} />
-        <Label>Pay</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="history">
-        <Icon sf={{ default: "clock", selected: "clock.fill" }} />
-        <Label>History</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="graphs">
-        <Icon sf={{ default: "chart.bar", selected: "chart.bar.fill" }} />
-        <Label>Spend</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <Icon sf={{ default: "person.circle", selected: "person.circle.fill" }} />
-        <Label>Profile</Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
-  );
-}
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ThemeProvider, useTheme } from "@/context/ThemeContext";
+import { AppProvider } from "@/context/AppContext";
 
-function ClassicTabLayout() {
-  const { isDark, colors } = useTheme();
-  const isIOS = Platform.OS === "ios";
-  const isWeb = Platform.OS === "web";
+// Only import ElevenLabsProvider on native — it uses livekit which breaks on web
+const ElevenLabsProvider = Platform.OS !== "web"
+  ? require("@elevenlabs/react-native").ElevenLabsProvider
+  : ({ children }: { children: React.ReactNode }) => <>{children}</>;
+
+SplashScreen.preventAutoHideAsync();
+
+const queryClient = new QueryClient();
+
+function RootLayoutNav() {
+  const { colors } = useTheme();
 
   return (
-    <Tabs
+    <Stack
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: {
-          position: "absolute",
-          backgroundColor: isIOS ? "transparent" : colors.tabBar,
-          borderTopWidth: isWeb ? 1 : 0,
-          borderTopColor: colors.border,
-          elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
-        },
-        tabBarBackground: () =>
-          isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? "dark" : "light"}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View
-              style={[StyleSheet.absoluteFill, { backgroundColor: colors.tabBar }]}
-            />
-          ) : null,
+        contentStyle: { backgroundColor: colors.background },
+        animation: "slide_from_right",
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color }) =>
-            isIOS ? <SymbolView name="house" tintColor={color} size={22} /> : <Ionicons name="home-outline" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="pay"
-        options={{
-          title: "Pay",
-          tabBarIcon: ({ color }) =>
-            isIOS ? <SymbolView name="mic.circle" tintColor={color} size={22} /> : <Ionicons name="mic-outline" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: "History",
-          tabBarIcon: ({ color }) =>
-            isIOS ? <SymbolView name="clock" tintColor={color} size={22} /> : <Ionicons name="time-outline" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="graphs"
-        options={{
-          title: "Spend",
-          tabBarIcon: ({ color }) =>
-            isIOS ? <SymbolView name="chart.bar" tintColor={color} size={22} /> : <Ionicons name="bar-chart-outline" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "Profile",
-          tabBarIcon: ({ color }) =>
-            isIOS ? <SymbolView name="person.circle" tintColor={color} size={22} /> : <Ionicons name="person-outline" size={22} color={color} />,
-        }}
-      />
-    </Tabs>
+      <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="qr" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+      <Stack.Screen name="nearby" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+      <Stack.Screen name="split" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+      <Stack.Screen name="receipt" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+      <Stack.Screen name="request" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+    </Stack>
   );
 }
 
-export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
-  }
-  return <ClassicTabLayout />;
+export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) return null;
+
+  return (
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <AppProvider>
+              <ElevenLabsProvider>
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider>
+                    <RootLayoutNav />
+                  </KeyboardProvider>
+                </GestureHandlerRootView>
+              </ElevenLabsProvider>
+            </AppProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </ErrorBoundary>
+    </SafeAreaProvider>
+  );
 }

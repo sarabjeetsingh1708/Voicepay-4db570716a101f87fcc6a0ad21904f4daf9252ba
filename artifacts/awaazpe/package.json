@@ -56,6 +56,9 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@elevenlabs/react-native": "^0.1.0",
+    "@livekit/react-native": "^2.4.0",
+    "@livekit/react-native-webrtc": "^125.0.9",
     "@nkzw/create-context-hook": "^1.1.0",
     "expo-audio": "^1.1.1",
     "expo-av": "^16.0.8",
@@ -64,6 +67,7 @@
     "expo-print": "^15.0.8",
     "expo-sharing": "^14.0.8",
     "form-data": "^4.0.5",
+    "livekit-client": "^2.9.0",
     "react-native-chart-kit": "^6.12.0",
     "react-native-qrcode-svg": "^6.3.21"
   }
