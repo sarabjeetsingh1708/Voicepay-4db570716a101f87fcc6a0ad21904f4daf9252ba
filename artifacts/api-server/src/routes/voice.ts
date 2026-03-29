@@ -3,15 +3,21 @@ import fetch from "node-fetch";
 
 const router: IRouter = Router();
 
+// Read credentials from environment (populated from .env via dotenv/config in index.ts)
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
 const ELEVENLABS_AGENT_ID = process.env.ELEVENLABS_AGENT_ID || "";
 
-// GET /api/voice/token
-// Returns a signed short-lived WebRTC session token so the API key is never exposed client-side
+// ── GET /api/voice/token ──────────────────────────────────────────────────────
+// Returns a short-lived signed conversation token so the API key is NEVER
+// exposed to the browser.  The @11labs/client SDK uses this token to open a
+// WebSocket directly to ElevenLabs.
 router.get("/token", async (req, res) => {
   try {
     if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
-      res.status(500).json({ error: "ElevenLabs credentials not configured" });
+      res.status(500).json({
+        error:
+          "ElevenLabs credentials not configured. Check ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID in your .env file.",
+      });
       return;
     }
 
@@ -27,8 +33,10 @@ router.get("/token", async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("ElevenLabs token error:", errText);
-      res.status(500).json({ error: "Failed to get session token" });
+      console.error("ElevenLabs token error:", response.status, errText);
+      res.status(response.status).json({
+        error: `ElevenLabs returned ${response.status}: ${errText}`,
+      });
       return;
     }
 
@@ -40,20 +48,20 @@ router.get("/token", async (req, res) => {
   }
 });
 
-// POST /api/voice/parse
-// Parses a transcript into structured payment intent (action, amount, recipient, date)
-// Called by the ElevenLabs agent via a client tool after transcription
+// ── POST /api/voice/parse ─────────────────────────────────────────────────────
+// Parses a transcript into a structured payment intent.
+// Called by the ElevenLabs agent client tool after it gathers information.
 router.post("/parse", async (req, res) => {
   const { transcript, contacts = [], languageCode = "en-IN" } = req.body;
+
   if (!transcript) {
     res.status(400).json({ error: "Missing transcript" });
     return;
   }
 
-  // Normalise to lowercase English for matching
   const text = transcript.toLowerCase().trim();
 
-  // Hindi/Hinglish number words — useful even when ElevenLabs transcribes in Hinglish
+  // Hindi/Hinglish number words
   const hindiNumbers: Record<string, number> = {
     ek: 1, do: 2, teen: 3, char: 4, paanch: 5, chhe: 6, saat: 7,
     aath: 8, nau: 9, das: 10, gyarah: 11, barah: 12, terah: 13,
@@ -64,19 +72,26 @@ router.post("/parse", async (req, res) => {
   };
 
   // Detect action
-  let action: "send" | "schedule" | "check_balance" | "history" | "unknown" = "unknown";
+  let action: "send" | "schedule" | "check_balance" | "history" | "unknown" =
+    "unknown";
   let confidence = 0.5;
 
   if (/\b(send|pay|bhejo|bhej|transfer|de do|dedo|bhejdo)\b/.test(text)) {
     action = "send";
     confidence += 0.2;
-  } else if (/\b(schedule|kal|parso|tomorrow|next|set|remind)\b/.test(text)) {
+  } else if (
+    /\b(schedule|kal|parso|tomorrow|next|set|remind)\b/.test(text)
+  ) {
     action = "schedule";
     confidence += 0.15;
-  } else if (/\b(balance|bakiya|check|kitna|how much|paisa|paise)\b/.test(text)) {
+  } else if (
+    /\b(balance|bakiya|check|kitna|how much|paisa|paise)\b/.test(text)
+  ) {
     action = "check_balance";
     confidence += 0.2;
-  } else if (/\b(history|transactions|ledger|purana|past)\b/.test(text)) {
+  } else if (
+    /\b(history|transactions|ledger|purana|past)\b/.test(text)
+  ) {
     action = "history";
     confidence += 0.15;
   }
@@ -96,16 +111,15 @@ router.post("/parse", async (req, res) => {
       if (hindiNumbers[word] !== undefined) {
         const val = hindiNumbers[word];
         if (val === 100) {
-          if (extractedAmount === 0) extractedAmount = 100;
-          else extractedAmount *= 100;
+          extractedAmount = extractedAmount === 0 ? 100 : extractedAmount * 100;
           found = true;
         } else if (val === 1000) {
-          if (extractedAmount === 0) extractedAmount = 1000;
-          else extractedAmount *= 1000;
+          extractedAmount =
+            extractedAmount === 0 ? 1000 : extractedAmount * 1000;
           found = true;
         } else if (val === 100000) {
-          if (extractedAmount === 0) extractedAmount = 100000;
-          else extractedAmount *= 100000;
+          extractedAmount =
+            extractedAmount === 0 ? 100000 : extractedAmount * 100000;
           found = true;
         } else {
           extractedAmount += val;
@@ -135,7 +149,8 @@ router.post("/parse", async (req, res) => {
         if (namePart.length < 3) continue;
         for (const word of words) {
           if (word === namePart) score += 2;
-          else if (word.includes(namePart) || namePart.includes(word)) score += 1;
+          else if (word.includes(namePart) || namePart.includes(word))
+            score += 1;
         }
       }
       if (score > bestScore) {
@@ -163,11 +178,14 @@ router.post("/parse", async (req, res) => {
   } else if (/\b(parso|day after)\b/.test(text)) {
     scheduledDate = dayAfter.toISOString().split("T")[0];
   } else {
-    const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const days = [
+      "sunday", "monday", "tuesday", "wednesday",
+      "thursday", "friday", "saturday",
+    ];
     for (let i = 0; i < days.length; i++) {
       if (text.includes(days[i])) {
         const now = new Date();
-        const diff = (i - now.getDay() + 7) % 7 || 7;
+        const diff = ((i - now.getDay() + 7) % 7) || 7;
         const target = new Date(now);
         target.setDate(now.getDate() + diff);
         scheduledDate = target.toISOString().split("T")[0];
