@@ -17,7 +17,10 @@ import { COLORS } from "@/constants/colors";
 import { useTheme } from "@/context/ThemeContext";
 import { useApp, MOCK_CONTACTS } from "@/context/AppContext";
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : "";
+const BASE_URL =
+  process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
+    : process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";
 
 async function playTTSNotification(text: string, language: string) {
   if (Platform.OS !== "web") return;
